@@ -88,3 +88,54 @@ def calculate_cardiac_drift(df):
     # Calculate the percentage increase
     drift_percent = ((ratio_2 - ratio_1) / ratio_1) * 100
     return round(drift_percent, 2)
+
+def get_basic_stats(df):
+    """Calculates standard running metrics like total distance, time, and average pace."""
+    if len(df) == 0:
+        return {}
+        
+    # Safely get max distance (ignoring NaN values)
+    total_distance = df['distance_km'].max() if 'distance_km' in df.columns else 0
+    
+    # Calculate Total Time
+    total_seconds = (df.index[-1] - df.index[0]).total_seconds()
+    hours = int(total_seconds // 3600)
+    minutes = int((total_seconds % 3600) // 60)
+    seconds = int(total_seconds % 60)
+    
+    if hours > 0:
+        formatted_time = f"{hours}:{minutes:02d}:{seconds:02d}"
+    else:
+        formatted_time = f"{minutes:02d}:{seconds:02d}"
+        
+    # Calculate Average Pace (min/km)
+    if total_distance > 0:
+        avg_pace_decimal = (total_seconds / 60) / total_distance
+        pace_minutes = int(avg_pace_decimal)
+        pace_seconds = int((avg_pace_decimal - pace_minutes) * 60)
+        formatted_pace = f"{pace_minutes}:{pace_seconds:02d} /km"
+    else:
+        formatted_pace = "0:00 /km"
+        
+    # Calculate HR Averages
+    avg_hr = int(df['smoothed_heart_rate'].mean()) if 'smoothed_heart_rate' in df.columns else 0
+    max_hr = int(df['smoothed_heart_rate'].max()) if 'smoothed_heart_rate' in df.columns else 0
+    
+    return {
+        "Distance": f"{total_distance:.2f} km",
+        "Time": formatted_time,
+        "Avg Pace": formatted_pace,
+        "Avg HR": f"{avg_hr} bpm",
+        "Max HR": f"{max_hr} bpm"
+    }
+
+def get_trimp_context(score):
+    """Provides human-readable context for the TRIMP score."""
+    if score < 50:
+        return "Light Strain (Recovery, warm-up, or very short effort)"
+    elif score < 120:
+        return "Moderate Strain (Standard daily aerobic maintenance)"
+    elif score < 200:
+        return "High Strain (Hard workout, tempo, or long run)"
+    else:
+        return "Extreme Strain (Race day or grueling endurance event)"
