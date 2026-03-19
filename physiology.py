@@ -139,3 +139,42 @@ def get_trimp_context(score):
         return "High Strain (Hard workout, tempo, or long run)"
     else:
         return "Extreme Strain (Race day or grueling endurance event)"
+    
+import numpy as np
+
+def generate_athlete_intelligence(df, stats, workout_type, drift, age, weight):
+    """Generates a highly specific, lab-grade text analysis of the run."""
+    if len(df) == 0 or 'smoothed_pace_min_km' not in df.columns:
+        return "Not enough continuous data to generate DAKSHboard Intelligence."
+        
+    # --- 1. Pace Analysis (Kinematics) ---
+    # We look at standard deviation to see how erratic the pacing was
+    pace_std = df['smoothed_pace_min_km'].std()
+    
+    pace_text = f"**Pacing Kinematics:** You averaged {stats.get('Avg Pace', '0:00')} per kilometer. "
+    if pace_std < 0.5:
+        pace_text += f"Your pace variance was exceptionally tight (±{pace_std:.2f} min/km), indicating masterful mechanical efficiency and pacing discipline. You locked into your target rhythm and held it."
+    elif pace_std < 1.0:
+        pace_text += f"Your pace variance was moderate (±{pace_std:.2f} min/km). This is typical for rolling terrain or standard interval sessions where mechanical output naturally fluctuates."
+    else:
+        pace_text += f"Your pace showed high volatility (±{pace_std:.2f} min/km). If this wasn't a strict interval or hill workout, you may be bleeding kinetic energy through inconsistent effort pacing."
+
+    # --- 2. Cardiovascular Analysis (Physiology) ---
+    max_hr = df['smoothed_heart_rate'].max()
+    hr_text = f"\n\n**Cardiovascular Load:** Peaking at {int(max_hr)} BPM, this session was classified as a *{workout_type}*. "
+    
+    if drift < 5.0:
+        hr_text += f"With a cardiac drift of only {drift}%, your aerobic decoupling is practically non-existent. Your cardiovascular engine is highly adapted to this specific effort and duration; you did not experience significant late-stage fatigue."
+    elif drift < 10.0:
+        hr_text += f"Your cardiac drift hit {drift}%. As your core temperature rose and blood volume shifted, your heart had to work measurably harder to maintain the same mechanical output. This is a solid training stimulus."
+    else:
+        hr_text += f"A cardiac drift of {drift}% signals massive aerobic decoupling. Your physiological efficiency broke down significantly in the second half of the effort, likely due to dehydration, heat stress, or pushing beyond your current muscular endurance baseline."
+
+    # --- 3. Biometric Context ---
+    # Rough caloric estimate: duration (hours) * weight (kg) * METs (approx 10 for running)
+    total_hours = (df.index[-1] - df.index[0]).total_seconds() / 3600
+    est_calories = int(total_hours * weight * 10)
+    
+    bio_text = f"\n\n**Biometric Impact:** Based on your profile ({age} yrs, {weight} kg), this effort demanded approximately {est_calories} kilocalories of metabolic output. Prioritize glycogen replenishment and hydration to maximize supercompensation from this TRIMP load."
+
+    return pace_text + hr_text + bio_text
