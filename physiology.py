@@ -1,4 +1,9 @@
 import pandas as pd
+import numpy as np
+
+# ==========================================
+# 1. CORE PHYSIOLOGICAL MATH
+# ==========================================
 
 def add_hr_zones(df, max_hr, rest_hr):
     """Calculates custom HR zones using the Karvonen (HRR) method and returns bins/labels."""
@@ -6,8 +11,6 @@ def add_hr_zones(df, max_hr, rest_hr):
         return df, []
         
     hrr = max_hr - rest_hr
-    
-    # We return these bins so our graphing tool knows exactly where to paint the background colors
     bins = [0, rest_hr + (hrr * 0.50), rest_hr + (hrr * 0.60), 
             rest_hr + (hrr * 0.70), rest_hr + (hrr * 0.80), 
             rest_hr + (hrr * 0.90), max_hr + 10]
@@ -22,10 +25,7 @@ def calculate_training_stress(df):
     if 'hr_zone' not in df.columns:
         return 0
         
-    # Get total seconds in each zone
     zone_counts = df['hr_zone'].value_counts()
-    
-    # Convert seconds to minutes and apply the Edwards multipliers
     stress_score = (
         (zone_counts.get('Zone 1', 0) / 60) * 1 +
         (zone_counts.get('Zone 2', 0) / 60) * 2 +
@@ -45,136 +45,127 @@ def classify_workout(df):
         return "Rest / No Data"
         
     zone_counts = df['hr_zone'].value_counts()
-    
-    # Calculate percentage of time spent in specific groupings
     z1_z2_pct = (zone_counts.get('Zone 1', 0) + zone_counts.get('Zone 2', 0)) / total_active_seconds
     z3_pct = zone_counts.get('Zone 3', 0) / total_active_seconds
     z4_z5_pct = (zone_counts.get('Zone 4', 0) + zone_counts.get('Zone 5', 0)) / total_active_seconds
     
-    # Rule-based logic engine
-    if z4_z5_pct > 0.15:
-        return "Threshold / VO2 Max Interval" # Hard effort, high lactic acid
-    elif z3_pct > 0.30:
-        return "Tempo Run" # Sustained moderate-hard effort
-    elif z1_z2_pct > 0.80:
-        return "Recovery / Easy Aerobic" # Base building
-    else:
-        return "Mixed Aerobic Base"
-    
+    if z4_z5_pct > 0.15: return "Threshold / VO2 Max Interval"
+    elif z3_pct > 0.30: return "Tempo Run"
+    elif z1_z2_pct > 0.80: return "Recovery / Easy Aerobic"
+    else: return "Mixed Aerobic Base"
+
 def calculate_cardiac_drift(df):
     """Calculates aerobic decoupling between the first and second half of a run."""
     if 'smoothed_speed_kmh' not in df.columns or 'smoothed_heart_rate' not in df.columns:
         return 0.0
 
-    # Filter out stops - we only want active moving data
     moving_df = df[df['smoothed_speed_kmh'] > 0.5].copy()
-    
-    # If the run is too short, drift isn't scientifically valid
-    if len(moving_df) < 120: 
-        return 0.0
+    if len(moving_df) < 120: return 0.0
         
-    # Calculate the strain ratio (Beats per minute per km/h)
     moving_df['hr_speed_ratio'] = moving_df['smoothed_heart_rate'] / moving_df['smoothed_speed_kmh']
     
-    # Split the dataset in half chronologically
     midpoint = len(moving_df) // 2
     first_half = moving_df.iloc[:midpoint]
     second_half = moving_df.iloc[midpoint:]
     
-    # Average the ratios
     ratio_1 = first_half['hr_speed_ratio'].mean()
     ratio_2 = second_half['hr_speed_ratio'].mean()
     
-    # Calculate the percentage increase
+    if ratio_1 == 0: return 0.0
     drift_percent = ((ratio_2 - ratio_1) / ratio_1) * 100
     return round(drift_percent, 2)
 
-def get_basic_stats(df):
-    """Calculates standard running metrics like total distance, time, and average pace."""
-    if len(df) == 0:
-        return {}
-        
-    # Safely get max distance (ignoring NaN values)
-    total_distance = df['distance_km'].max() if 'distance_km' in df.columns else 0
+
+# ==========================================
+# 2. DATA GRID EXTRACTION (GARMIN STYLE)
+# ==========================================
+
+def get_basic_stats(df, weight_kg):
+    """Compiles a comprehensive dictionary of advanced metrics for the UI Grid."""
+    if len(df) == 0: return {}
     
-    # Calculate Total Time
-    total_seconds = (df.index[-1] - df.index[0]).total_seconds()
-    hours = int(total_seconds // 3600)
-    minutes = int((total_seconds % 3600) // 60)
-    seconds = int(total_seconds % 60)
+    # Active vs Total Time
+    active_df = df.dropna(subset=['smoothed_speed_kmh']) if 'smoothed_speed_kmh' in df.columns else df
+    total_sec = (df.index[-1] - df.index[0]).total_seconds()
+    moving_sec = len(active_df)
     
-    if hours > 0:
-        formatted_time = f"{hours}:{minutes:02d}:{seconds:02d}"
-    else:
-        formatted_time = f"{minutes:02d}:{seconds:02d}"
+    def fmt_time(seconds):
+        h, m, s = int(seconds // 3600), int((seconds % 3600) // 60), int(seconds % 60)
+        return f"{h}:{m:02d}:{s:02d}" if h > 0 else f"{m:02d}:{s:02d}"
         
-    # Calculate Average Pace (min/km)
-    if total_distance > 0:
-        avg_pace_decimal = (total_seconds / 60) / total_distance
-        pace_minutes = int(avg_pace_decimal)
-        pace_seconds = int((avg_pace_decimal - pace_minutes) * 60)
-        formatted_pace = f"{pace_minutes}:{pace_seconds:02d} /km"
-    else:
-        formatted_pace = "0:00 /km"
-        
-    # Calculate HR Averages
+    def fmt_pace(speed_kmh):
+        if pd.isna(speed_kmh) or speed_kmh <= 0.5: return "-- /km"
+        pace_dec = 60 / speed_kmh
+        m, s = int(pace_dec), int((pace_dec - int(pace_dec)) * 60)
+        return f"{m}:{s:02d} /km"
+
+    # Core extractions
+    dist = df['distance_km'].max() if 'distance_km' in df.columns else 0
+    avg_speed = active_df['smoothed_speed_kmh'].mean() if 'smoothed_speed_kmh' in df.columns else 0
+    max_speed = active_df['smoothed_speed_kmh'].max() if 'smoothed_speed_kmh' in df.columns else 0
+    
+    # Biometrics
     avg_hr = int(df['smoothed_heart_rate'].mean()) if 'smoothed_heart_rate' in df.columns else 0
     max_hr = int(df['smoothed_heart_rate'].max()) if 'smoothed_heart_rate' in df.columns else 0
+    avg_cadence = int(active_df['smoothed_spm'].mean()) if 'smoothed_spm' in df.columns else 0
+    max_cadence = int(active_df['smoothed_spm'].max()) if 'smoothed_spm' in df.columns else 0
     
+    # Stride Length Estimate (Speed in meters/min divided by Steps per min)
+    avg_stride = ((avg_speed * 1000) / 60) / avg_cadence if avg_cadence > 0 else 0
+    
+    # Elevation
+    elev_gain = "--"
+    min_elev, max_elev = "--", "--"
+    if 'elevation_m' in df.columns:
+        min_elev = f"{int(df['elevation_m'].min())} m"
+        max_elev = f"{int(df['elevation_m'].max())} m"
+        diffs = df['elevation_m'].diff()
+        elev_gain = f"{int(diffs[diffs > 0].sum())} m"
+        
+    # Caloric & Sweat Estimates
+    est_calories = int(weight_kg * dist * 1.036)
+    est_sweat = int((moving_sec / 3600) * 800) # Roughly 800ml per hour of work
+    
+    # Temp
+    avg_temp = f"{df['temperature'].mean():.1f} °C" if 'temperature' in df.columns else "--"
+
     return {
-        "Distance": f"{total_distance:.2f} km",
-        "Time": formatted_time,
-        "Avg Pace": formatted_pace,
-        "Avg HR": f"{avg_hr} bpm",
-        "Max HR": f"{max_hr} bpm"
+        "Distance": {"Distance": f"{dist:.2f} km"},
+        "Timing": {"Time": fmt_time(total_sec), "Moving Time": fmt_time(moving_sec), "Elapsed Time": fmt_time(total_sec)},
+        "Pace/Speed": {"Avg Pace": fmt_pace(avg_speed), "Best Pace": fmt_pace(max_speed)},
+        "Heart Rate": {"Avg HR": f"{avg_hr} bpm", "Max HR": f"{max_hr} bpm"},
+        "Running Dynamics": {"Avg Cadence": f"{avg_cadence} spm", "Max Cadence": f"{max_cadence} spm", "Avg Stride": f"{avg_stride:.2f} m"},
+        "Elevation": {"Total Ascent": elev_gain, "Min Elev": min_elev, "Max Elev": max_elev},
+        "Nutrition & Hydration": {"Est. Calories": f"{est_calories} kcal", "Est. Sweat Loss": f"{est_sweat} ml"},
+        "Environment": {"Avg Temp": avg_temp}
     }
 
+
+# ==========================================
+# 3. FRAGMENTED COACHING INTELLIGENCE
+# ==========================================
+
+def get_pace_insight(df):
+    if 'smoothed_pace_min_km' not in df.columns: return "Insufficient pacing data."
+    std = df['smoothed_pace_min_km'].std()
+    if std < 0.4: return f"**Kinematics:** Exceptionally tight pacing variance (±{std:.2f} min/km). Perfect rhythm lock—crucial for preventing late-stage neuromuscular fatigue in long endurance blocks."
+    elif std < 0.8: return f"**Kinematics:** Moderate pacing variance (±{std:.2f} min/km). Expected behavior over rolling terrain or standard interval transitions."
+    return f"**Kinematics:** High pacing volatility (±{std:.2f} min/km). Unless doing intense micro-intervals, smoothing this kinetic output will save massive energy over long distances."
+
+def get_hr_insight(drift, workout_type):
+    if drift < 5.0: return f"**Physiology ({workout_type}):** Outstanding cardiovascular durability. A cardiac drift of {drift}% means your aerobic engine maintained immense efficiency with almost zero decoupling."
+    elif drift < 10.0: return f"**Physiology ({workout_type}):** Normal stress response. A drift of {drift}% shows your heart worked progressively harder to manage core temp and output. Excellent training stimulus."
+    return f"**Physiology ({workout_type}):** Significant aerobic decoupling ({drift}%). This signals heavy late-stage fatigue, likely driven by dehydration or pushing beyond your current muscular endurance baseline."
+
+def get_cadence_insight(df):
+    if 'smoothed_spm' not in df.columns: return "Cadence sensor data not detected."
+    avg_spm = df['smoothed_spm'].mean()
+    if avg_spm >= 170: return f"**Biomechanics:** Elite turnover rate ({int(avg_spm)} spm). Fast, light footstrikes minimize ground contact time and drastically reduce impact load on the knees."
+    elif avg_spm >= 160: return f"**Biomechanics:** Solid turnover ({int(avg_spm)} spm). Pushing this slightly higher towards 170+ will reduce your stride overreach and improve overall running economy."
+    return f"**Biomechanics:** Low turnover ({int(avg_spm)} spm). This often indicates 'over-striding', which acts as a braking force. Increasing step frequency will immediately lower your cardiovascular load at this pace."
+
 def get_trimp_context(score):
-    """Provides human-readable context for the TRIMP score."""
-    if score < 50:
-        return "Light Strain (Recovery, warm-up, or very short effort)"
-    elif score < 120:
-        return "Moderate Strain (Standard daily aerobic maintenance)"
-    elif score < 200:
-        return "High Strain (Hard workout, tempo, or long run)"
-    else:
-        return "Extreme Strain (Race day or grueling endurance event)"
-    
-import numpy as np
-
-def generate_athlete_intelligence(df, stats, workout_type, drift, age, weight):
-    """Generates a highly specific, lab-grade text analysis of the run."""
-    if len(df) == 0 or 'smoothed_pace_min_km' not in df.columns:
-        return "Not enough continuous data to generate DAKSHboard Intelligence."
-        
-    # --- 1. Pace Analysis (Kinematics) ---
-    # We look at standard deviation to see how erratic the pacing was
-    pace_std = df['smoothed_pace_min_km'].std()
-    
-    pace_text = f"**Pacing Kinematics:** You averaged {stats.get('Avg Pace', '0:00')} per kilometer. "
-    if pace_std < 0.5:
-        pace_text += f"Your pace variance was exceptionally tight (±{pace_std:.2f} min/km), indicating masterful mechanical efficiency and pacing discipline. You locked into your target rhythm and held it."
-    elif pace_std < 1.0:
-        pace_text += f"Your pace variance was moderate (±{pace_std:.2f} min/km). This is typical for rolling terrain or standard interval sessions where mechanical output naturally fluctuates."
-    else:
-        pace_text += f"Your pace showed high volatility (±{pace_std:.2f} min/km). If this wasn't a strict interval or hill workout, you may be bleeding kinetic energy through inconsistent effort pacing."
-
-    # --- 2. Cardiovascular Analysis (Physiology) ---
-    max_hr = df['smoothed_heart_rate'].max()
-    hr_text = f"\n\n**Cardiovascular Load:** Peaking at {int(max_hr)} BPM, this session was classified as a *{workout_type}*. "
-    
-    if drift < 5.0:
-        hr_text += f"With a cardiac drift of only {drift}%, your aerobic decoupling is practically non-existent. Your cardiovascular engine is highly adapted to this specific effort and duration; you did not experience significant late-stage fatigue."
-    elif drift < 10.0:
-        hr_text += f"Your cardiac drift hit {drift}%. As your core temperature rose and blood volume shifted, your heart had to work measurably harder to maintain the same mechanical output. This is a solid training stimulus."
-    else:
-        hr_text += f"A cardiac drift of {drift}% signals massive aerobic decoupling. Your physiological efficiency broke down significantly in the second half of the effort, likely due to dehydration, heat stress, or pushing beyond your current muscular endurance baseline."
-
-    # --- 3. Biometric Context ---
-    # Rough caloric estimate: duration (hours) * weight (kg) * METs (approx 10 for running)
-    total_hours = (df.index[-1] - df.index[0]).total_seconds() / 3600
-    est_calories = int(total_hours * weight * 10)
-    
-    bio_text = f"\n\n**Biometric Impact:** Based on your profile ({age} yrs, {weight} kg), this effort demanded approximately {est_calories} kilocalories of metabolic output. Prioritize glycogen replenishment and hydration to maximize supercompensation from this TRIMP load."
-
-    return pace_text + hr_text + bio_text
+    if score < 50: return "Light Strain (Recovery/Warm-up)"
+    elif score < 120: return "Moderate Strain (Base Maintenance)"
+    elif score < 200: return "High Strain (Tempo/Long Run)"
+    return "Extreme Strain (Grueling Event)"
