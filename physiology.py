@@ -60,3 +60,31 @@ def classify_workout(df):
         return "Recovery / Easy Aerobic" # Base building
     else:
         return "Mixed Aerobic Base"
+    
+def calculate_cardiac_drift(df):
+    """Calculates aerobic decoupling between the first and second half of a run."""
+    if 'smoothed_speed_kmh' not in df.columns or 'smoothed_heart_rate' not in df.columns:
+        return 0.0
+
+    # Filter out stops - we only want active moving data
+    moving_df = df[df['smoothed_speed_kmh'] > 0.5].copy()
+    
+    # If the run is too short, drift isn't scientifically valid
+    if len(moving_df) < 120: 
+        return 0.0
+        
+    # Calculate the strain ratio (Beats per minute per km/h)
+    moving_df['hr_speed_ratio'] = moving_df['smoothed_heart_rate'] / moving_df['smoothed_speed_kmh']
+    
+    # Split the dataset in half chronologically
+    midpoint = len(moving_df) // 2
+    first_half = moving_df.iloc[:midpoint]
+    second_half = moving_df.iloc[midpoint:]
+    
+    # Average the ratios
+    ratio_1 = first_half['hr_speed_ratio'].mean()
+    ratio_2 = second_half['hr_speed_ratio'].mean()
+    
+    # Calculate the percentage increase
+    drift_percent = ((ratio_2 - ratio_1) / ratio_1) * 100
+    return round(drift_percent, 2)
