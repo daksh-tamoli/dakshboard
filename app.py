@@ -9,56 +9,82 @@ from data_pipeline import extract_and_clean
 from physiology import (add_hr_zones, calculate_training_stress, classify_workout, 
                         calculate_cardiac_drift, get_basic_stats, get_trimp_context,
                         get_pace_insight, get_hr_insight, get_cadence_insight)
-from database import init_db, run_exists, save_run, load_history
+from database import init_db, run_exists, save_run, load_history, get_user_profile, save_user_profile
 
 st.set_page_config(page_title="DAKSHboard", page_icon="⚡", layout="wide")
-
-# --- INITIALIZE DATABASE & SESSION STATE ---
 init_db()
 
-if 'max_hr' not in st.session_state: st.session_state.max_hr = 200
-if 'rest_hr' not in st.session_state: st.session_state.rest_hr = 50
-if 'age' not in st.session_state: st.session_state.age = 19
-if 'weight' not in st.session_state: st.session_state.weight = 71.0
-if 'height' not in st.session_state: st.session_state.height = 175
+# --- BACKGROUND DATA SYNC (Bypassing Login) ---
+st.session_state.email = "local_athlete"
+
+if 'profile_loaded' not in st.session_state:
+    profile = get_user_profile(st.session_state.email)
+    if profile:
+        st.session_state.age, st.session_state.weight, st.session_state.height, st.session_state.max_hr, st.session_state.rest_hr = profile
+    else:
+        st.session_state.age, st.session_state.weight, st.session_state.height, st.session_state.max_hr, st.session_state.rest_hr = 19, 71.0, 175, 200, 50
+    st.session_state.profile_loaded = True
 
 # --- NAVIGATION ---
 st.sidebar.title("⚡ DAKSHboard")
-page = st.sidebar.radio("Navigation", ["📊 Analytics Dashboard", "👤 Athlete Profile"])
+page = st.sidebar.radio("Navigation", ["📊 Analytics Dashboard", "🤖 AI Training Coach", "⚙️ Athlete Profile"])
 st.sidebar.divider()
 
-if page == "👤 Athlete Profile":
+if page == "⚙️ Athlete Profile":
     st.title("Athlete Profile Settings")
-    st.markdown("Calibrate your physiological baselines to ensure hyper-accurate algorithmic analysis.")
+    st.markdown("Calibrate your baselines. Data is permanently saved to your local database.")
+    
     col1, col2 = st.columns(2)
     with col1:
-        st.subheader("Biometrics")
-        st.session_state.age = st.number_input("Age", min_value=10, max_value=100, value=st.session_state.age)
-        st.session_state.weight = st.number_input("Weight (kg)", min_value=30.0, max_value=150.0, value=float(st.session_state.weight))
-        st.session_state.height = st.number_input("Height (cm)", min_value=100, max_value=250, value=st.session_state.height)
+        new_age = st.number_input("Age", min_value=10, max_value=100, value=st.session_state.age)
+        new_weight = st.number_input("Weight (kg)", min_value=30.0, max_value=150.0, value=float(st.session_state.weight))
+        new_height = st.number_input("Height (cm)", min_value=100, max_value=250, value=st.session_state.height)
     with col2:
-        st.subheader("Cardiovascular Engine")
-        st.session_state.max_hr = st.number_input("Maximum Heart Rate", min_value=150, max_value=220, value=st.session_state.max_hr)
-        st.session_state.rest_hr = st.number_input("Resting Heart Rate", min_value=30, max_value=100, value=st.session_state.rest_hr)
+        new_max_hr = st.number_input("Maximum Heart Rate", min_value=150, max_value=220, value=st.session_state.max_hr)
+        new_rest_hr = st.number_input("Resting Heart Rate", min_value=30, max_value=100, value=st.session_state.rest_hr)
+        
+    if st.button("Save Profile"):
+        st.session_state.update({"age": new_age, "weight": new_weight, "height": new_height, "max_hr": new_max_hr, "rest_hr": new_rest_hr})
+        save_user_profile(st.session_state.email, new_age, new_weight, new_height, new_max_hr, new_rest_hr)
+        st.success("Profile permanently synced to database.")
+
+elif page == "🤖 AI Training Coach":
+    st.title("🤖 DAKSHboard AI Coach")
+    st.markdown("Your personal endurance coach, architected to analyze your biometric telemetry.")
+    
+    # Initialize chat history
+    if "messages" not in st.session_state:
+        st.session_state.messages = [
+            {"role": "assistant", "content": "I'm the DAKSHboard analytical engine. Let's optimize your physiological load to ensure you lock in that sub-3.5 hour finish at the NMDC Hyderabad Marathon. How is the cardiovascular strain feeling after the latest tempo interval?"}
+        ]
+
+    # Display chat messages from history on app rerun
+    for msg in st.session_state.messages:
+        st.chat_message(msg["role"]).write(msg["content"])
+
+    # React to user input
+    if prompt := st.chat_input("Ask about TRIMP, cardiac drift, or race pacing..."):
+        st.chat_message("user").write(prompt)
+        st.session_state.messages.append({"role": "user", "content": prompt})
+
+        # Placeholder response until API is connected
+        bot_response = f"I've logged your query regarding '{prompt}'. To process this against your historical `.fit` database, you'll need to drop an LLM API key into the Streamlit secrets manager. Until then, keep an eye on your Zone 2 aerobic base!"
+        st.chat_message("assistant").write(bot_response)
+        st.session_state.messages.append({"role": "assistant", "content": bot_response})
 
 elif page == "📊 Analytics Dashboard":
     st.title("Performance Analytics")
     
-    # --- MULTI-FILE UPLOADER ---
-    st.sidebar.markdown("**Upload Training Data**")
     uploaded_files = st.sidebar.file_uploader("Upload Garmin .fit files", type=['fit'], accept_multiple_files=True)
 
-    # Process new files into the database
     if uploaded_files:
-        with st.spinner("Syncing new runs to database..."):
+        with st.spinner("Syncing runs to your database..."):
             for uploaded_file in uploaded_files:
-                if not run_exists(uploaded_file.name):
+                if not run_exists(st.session_state.email, uploaded_file.name):
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".fit") as tmp_file:
                         tmp_file.write(uploaded_file.getvalue())
                         tmp_file_path = tmp_file.name
-                    
                     try:
-                        # Extract core data just to save to DB
                         df_temp = extract_and_clean(tmp_file_path)
                         df_temp, _ = add_hr_zones(df_temp, st.session_state.max_hr, st.session_state.rest_hr)
                         
@@ -68,22 +94,18 @@ elif page == "📊 Analytics Dashboard":
                         workout = classify_workout(df_temp)
                         drift = calculate_cardiac_drift(df_temp)
                         
-                        # Save to SQLite
-                        save_run(uploaded_file.name, run_date, stats_temp["Distance"]["Distance"], 
-                                 trimp, workout, stats_temp["Pace/Speed"]["Avg Pace"], drift)
-                    except Exception as e:
-                        st.sidebar.error(f"Failed to process {uploaded_file.name}")
+                        save_run(st.session_state.email, uploaded_file.name, run_date, 
+                                 stats_temp["Distance"]["Distance"], trimp, workout, 
+                                 stats_temp["Pace/Speed"]["Avg Pace"], drift)
+                    except Exception:
+                        pass
                     finally:
                         os.remove(tmp_file_path)
 
-    # Load the historical database
-    history_df = load_history()
+    history_df = load_history(st.session_state.email)
 
     if not history_df.empty:
-        # Let the user select which run to view in detail
         selected_filename = st.selectbox("Select a run to analyze:", history_df['filename'].tolist())
-        
-        # Find the actual file object from the uploaded list
         selected_file = next((f for f in uploaded_files if f.name == selected_filename), None)
         
         if selected_file:
@@ -92,17 +114,14 @@ elif page == "📊 Analytics Dashboard":
                 tmp_file_path = tmp_file.name
 
             try:
-                # 1. Pipeline & Engine
                 df = extract_and_clean(tmp_file_path)
                 df, hr_bins = add_hr_zones(df, st.session_state.max_hr, st.session_state.rest_hr)
                 
-                # 2. Extract Metrics
                 stats = get_basic_stats(df, st.session_state.weight)
                 stress_score = calculate_training_stress(df)
                 workout_type = classify_workout(df)
                 drift = calculate_cardiac_drift(df)
 
-                # --- TOP LEVEL SUMMARY ---
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("Classification", workout_type)
                 c2.metric("TRIMP Score", stress_score)
@@ -110,27 +129,40 @@ elif page == "📊 Analytics Dashboard":
                 c4.metric("Total Time", stats["Timing"]["Elapsed Time"])
                 st.divider()
 
-                # --- TABS ---
-                tab1, tab2, tab3 = st.tabs(["📉 Telemetry & Coaching", "📋 Comprehensive Stats & Zones", "📚 Training Log"])
+                tab1, tab2, tab3 = st.tabs(["📉 Telemetry & Environment", "📋 Comprehensive Stats & Zones", "📚 Training Log"])
 
                 with tab1:
                     elapsed_minutes = (df.index - df.index[0]).total_seconds() / 60.0
                     active_df = df.dropna(subset=['smoothed_pace_min_km'])
                     active_minutes = (active_df.index - df.index[0]).total_seconds() / 60.0
 
-                    # PACE
+                    # --- NEW: MAPBOX GPS ROUTE ---
+                    if 'lat' in df.columns and 'lon' in df.columns:
+                        st.subheader("Geospatial Route")
+                        map_df = df.dropna(subset=['lat', 'lon'])
+                        if not map_df.empty:
+                            fig_map = px.line_mapbox(map_df, lat="lat", lon="lon", zoom=13, height=400)
+                            fig_map.update_layout(mapbox_style="open-street-map", margin={"r":0,"t":0,"l":0,"b":0})
+                            st.plotly_chart(fig_map, use_container_width=True)
+                            st.write("")
+
+                    # --- NEW: ELEVATION PROFILE ---
+                    if 'elevation_m' in df.columns:
+                        st.subheader("Elevation Profile")
+                        fig_elev = go.Figure(go.Scatter(x=elapsed_minutes, y=df['elevation_m'], mode='lines', fill='tozeroy', line=dict(color='#27AE60', width=2)))
+                        fig_elev.update_layout(height=250, yaxis_title="Elevation (m)", margin=dict(l=0, r=0, t=10, b=0))
+                        st.plotly_chart(fig_elev, use_container_width=True)
+                        st.write("")
+
                     st.subheader("Pace Kinematics")
-                    fig_pace = go.Figure()
-                    fig_pace.add_trace(go.Scatter(x=active_minutes, y=active_df['smoothed_pace_min_km'], mode='lines', line=dict(color='#3498DB', width=2)))
+                    fig_pace = go.Figure(go.Scatter(x=active_minutes, y=active_df['smoothed_pace_min_km'], mode='lines', line=dict(color='#3498DB', width=2)))
                     fig_pace.update_layout(height=300, yaxis=dict(autorange="reversed"), margin=dict(l=0, r=0, t=10, b=0))
                     st.plotly_chart(fig_pace, use_container_width=True)
                     st.info(get_pace_insight(df))
                     st.write("")
 
-                    # HEART RATE
                     st.subheader("Cardiovascular Response")
-                    fig_hr = go.Figure()
-                    fig_hr.add_trace(go.Scatter(x=elapsed_minutes, y=df['smoothed_heart_rate'], mode='lines', line=dict(color='white', width=2)))
+                    fig_hr = go.Figure(go.Scatter(x=elapsed_minutes, y=df['smoothed_heart_rate'], mode='lines', line=dict(color='white', width=2)))
                     colors = ['#2980B9', '#27AE60', '#F1C40F', '#E67E22', '#E74C3C']
                     for i in range(1, len(hr_bins)-1):
                         fig_hr.add_hrect(y0=hr_bins[i], y1=hr_bins[i+1], fillcolor=colors[i-1], opacity=0.3, layer="below", line_width=0)
@@ -139,11 +171,9 @@ elif page == "📊 Analytics Dashboard":
                     st.info(get_hr_insight(drift, workout_type))
                     st.write("")
 
-                    # CADENCE
                     if 'smoothed_spm' in df.columns:
                         st.subheader("Running Dynamics (Cadence)")
-                        fig_cad = go.Figure()
-                        fig_cad.add_trace(go.Scatter(x=active_minutes, y=active_df['smoothed_spm'], mode='lines', line=dict(color='#9B59B6', width=2)))
+                        fig_cad = go.Figure(go.Scatter(x=active_minutes, y=active_df['smoothed_spm'], mode='lines', line=dict(color='#9B59B6', width=2)))
                         fig_cad.update_layout(height=300, yaxis_title="Steps per Minute", margin=dict(l=0, r=0, t=10, b=0))
                         st.plotly_chart(fig_cad, use_container_width=True)
                         st.info(get_cadence_insight(df))
@@ -170,10 +200,9 @@ elif page == "📊 Analytics Dashboard":
 
                 with tab3:
                     st.subheader("Historical Training Log")
-                    st.markdown("This database stores your aggregate metrics for the Race Predictor model.")
                     st.dataframe(history_df, use_container_width=True, hide_index=True)
 
             finally:
                 os.remove(tmp_file_path)
     else:
-        st.info("👈 Upload your .fit files to begin building your database.")
+        st.info("👈 Upload your .fit files to build your database.")
