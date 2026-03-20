@@ -169,3 +169,33 @@ def get_trimp_context(score):
     elif score < 120: return "Moderate Strain (Base Maintenance)"
     elif score < 200: return "High Strain (Tempo/Long Run)"
     return "Extreme Strain (Grueling Event)"
+
+import pandas as pd
+
+def calculate_pmc_metrics(history_df):
+    """Calculates CTL (Fitness), ATL (Fatigue), and TSB (Form) from the training log."""
+    if history_df.empty:
+        return pd.DataFrame()
+
+    # Convert dates and group multiple runs on the same day into a single daily TRIMP sum
+    df = history_df.copy()
+    df['date'] = pd.to_datetime(df['date']).dt.date
+    daily_trimp = df.groupby('date')['trimp'].sum().reset_index()
+    daily_trimp.set_index('date', inplace=True)
+
+    # Create a continuous daily calendar so rest days (0 TRIMP) are included in the math
+    idx = pd.date_range(daily_trimp.index.min(), daily_trimp.index.max() + pd.Timedelta(days=14))
+    daily_trimp.index = pd.DatetimeIndex(daily_trimp.index)
+    daily_trimp = daily_trimp.reindex(idx, fill_value=0)
+
+    # Calculate Exponential Weighted Moving Averages (EWMA)
+    # CTL = 42-day decay, ATL = 7-day decay
+    pmc = pd.DataFrame(index=daily_trimp.index)
+    pmc['Daily TRIMP'] = daily_trimp['trimp']
+    pmc['CTL (Fitness)'] = daily_trimp['trimp'].ewm(span=42, adjust=False).mean()
+    pmc['ATL (Fatigue)'] = daily_trimp['trimp'].ewm(span=7, adjust=False).mean()
+    
+    # TSB (Form) is yesterday's Fitness minus yesterday's Fatigue
+    pmc['TSB (Form)'] = pmc['CTL (Fitness)'].shift(1) - pmc['ATL (Fatigue)'].shift(1)
+    
+    return pmc.fillna(0).round(1)

@@ -4,6 +4,7 @@ import os
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
+from physiology import calculate_pmc_metrics
 
 from data_pipeline import extract_and_clean
 from physiology import (add_hr_zones, calculate_training_stress, classify_workout, 
@@ -129,8 +130,7 @@ elif page == "📊 Analytics Dashboard":
                 c4.metric("Total Time", stats["Timing"]["Elapsed Time"])
                 st.divider()
 
-                tab1, tab2, tab3 = st.tabs(["📉 Telemetry & Environment", "📋 Comprehensive Stats & Zones", "📚 Training Log"])
-
+                tab1, tab2, tab3, tab4 = st.tabs(["📉 Telemetry & Environment", "📋 Comprehensive Stats & Zones", "📚 Training Log", "📈 Long-Term Fitness (PMC)"])
                 with tab1:
                     elapsed_minutes = (df.index - df.index[0]).total_seconds() / 60.0
                     active_df = df.dropna(subset=['smoothed_pace_min_km'])
@@ -201,6 +201,45 @@ elif page == "📊 Analytics Dashboard":
                 with tab3:
                     st.subheader("Historical Training Log")
                     st.dataframe(history_df, use_container_width=True, hide_index=True)
+
+                with tab4:
+                    st.subheader("Performance Management Chart (PMC)")
+                    st.markdown("Track your Fitness (CTL), Fatigue (ATL), and Form (TSB) over time.")
+                    
+                    pmc_df = calculate_pmc_metrics(history_df)
+                    
+                    if not pmc_df.empty:
+                        fig_pmc = go.Figure()
+                        
+                        # Add TSB (Form) as a filled bar/area chart in the background
+                        fig_pmc.add_trace(go.Scatter(
+                            x=pmc_df.index, y=pmc_df['TSB (Form)'], 
+                            mode='lines', fill='tozeroy', name='Form (TSB)',
+                            line=dict(color='rgba(241, 196, 15, 0.4)', width=0)
+                        ))
+                        
+                        # Add ATL (Fatigue)
+                        fig_pmc.add_trace(go.Scatter(
+                            x=pmc_df.index, y=pmc_df['ATL (Fatigue)'], 
+                            mode='lines', name='Fatigue (ATL)',
+                            line=dict(color='#E74C3C', width=2)
+                        ))
+                        
+                        # Add CTL (Fitness)
+                        fig_pmc.add_trace(go.Scatter(
+                            x=pmc_df.index, y=pmc_df['CTL (Fitness)'], 
+                            mode='lines', name='Fitness (CTL)',
+                            line=dict(color='#3498DB', width=3)
+                        ))
+                        
+                        fig_pmc.update_layout(
+                            height=450, hovermode="x unified",
+                            margin=dict(l=0, r=0, t=10, b=0),
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                        )
+                        st.plotly_chart(fig_pmc, use_container_width=True)
+                    else:
+                        st.info("Upload more runs over consecutive days to generate your fitness curve.")
 
             finally:
                 os.remove(tmp_file_path)
