@@ -245,3 +245,4 @@ elif page == "📊 Analytics Dashboard":
                 os.remove(tmp_file_path)
     else:
         st.info("👈 Upload your .fit files to build your database.")
+        
