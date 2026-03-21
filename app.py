@@ -14,6 +14,62 @@ from database import init_db, run_exists, save_run, load_history, get_user_profi
 
 st.set_page_config(page_title="DAKSHboard", page_icon="⚡", layout="wide")
 init_db()
+# --- CUSTOM UI / UX CSS ---
+st.markdown("""
+    <style>
+    /* Hide Streamlit Branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    
+    /* Style the Metric Cards */
+    [data-testid="stMetric"] {
+        background-color: #191C24;
+        border-radius: 12px;
+        padding: 15px 20px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.4);
+        border: 1px solid #2D313A;
+        transition: transform 0.2s ease-in-out;
+    }
+    
+    [data-testid="stMetric"]:hover {
+        transform: translateY(-2px);
+        border-color: #00FFCC;
+    }
+
+    /* Make the metric values pop */
+    [data-testid="stMetricValue"] {
+        font-size: 2rem !important;
+        font-weight: 800 !important;
+        color: #FFFFFF !important;
+    }
+    
+    /* Style the Tabs for a cleaner look */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        background-color: #0E1117;
+        padding: 10px 10px 0 10px;
+        border-radius: 12px 12px 0 0;
+    }
+    .stTabs [data-baseweb="tab"] {
+        padding: 10px 20px;
+        background-color: #1E2127;
+        border-radius: 8px 8px 0 0;
+        border: 1px solid transparent;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #2D313A;
+        border-top: 2px solid #00FFCC !important;
+        color: #00FFCC !important;
+    }
+    
+    /* Soften the expanders and borders */
+    [data-testid="stExpander"] {
+        border-radius: 10px;
+        border: 1px solid #2D313A;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 # --- BACKGROUND DATA SYNC (Bypassing Login) ---
 st.session_state.email = "local_athlete"
@@ -245,4 +301,3 @@ elif page == "📊 Analytics Dashboard":
                 os.remove(tmp_file_path)
     else:
         st.info("👈 Upload your .fit files to build your database.")
-        
