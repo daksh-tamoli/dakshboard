@@ -4,3 +4,4 @@ numpy
 fitparse
 plotly
 matplotlib
+scikit-learn

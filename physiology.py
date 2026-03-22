@@ -130,6 +130,20 @@ def get_cadence_insight(df):
     elif avg_spm >= 160: return f"**Biomechanics:** Solid turnover ({int(avg_spm)} spm)."
     return f"**Biomechanics:** Low turnover ({int(avg_spm)} spm). Consider increasing step frequency."
 
+def get_elevation_insight(df):
+    """Generates an algorithmic insight based on vertical gain."""
+    if 'elevation_m' not in df.columns or df['elevation_m'].isnull().all(): 
+        return "Topographical sensor data not detected in this file."
+    
+    # Calculate total positive vertical gain
+    gain = df['elevation_m'].diff()[df['elevation_m'].diff() > 0].sum()
+    
+    if gain < 20: 
+        return f"**Topography:** Extremely flat route ({int(gain)}m gain). Maximizes pacing efficiency but provides minimal hill-climbing neuromuscular stimulus."
+    elif gain < 100: 
+        return f"**Topography:** Rolling terrain ({int(gain)}m gain). Excellent for building dynamic strength and breaking up muscular repetition."
+    return f"**Topography:** High vertical gain ({int(gain)}m). This acts as high-resistance strength training and directly spikes your cardiovascular load."
+
 def get_trimp_context(score):
     if score < 50: return "Light Strain"
     elif score < 120: return "Moderate Strain"
